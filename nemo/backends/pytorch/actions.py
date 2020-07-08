@@ -1371,6 +1371,7 @@ class PtActions(Actions):
 
                     # By default, disable broadcast_buffers. This disables batch norm synchronization on forward
                     # pass
+                    logging.info("module name DDP: %s", module_name)
                     module = DDP(
                         module, device_ids=[self.local_rank], broadcast_buffers=False, find_unused_parameters=True
                     )
@@ -1413,7 +1414,9 @@ class PtActions(Actions):
 
             # iteration over batches in epoch
             batch_counter = 0
+            logging.info("max_steps: %s, dataloader_length: %s, num_epochs: %s", max_steps, 0,  num_epochs)
             for _, data in enumerate(train_dataloader, 0):
+                #logging.info("step: %s, epoch: %s", self.step, self.epoch)
                 if max_steps is not None and self.step >= max_steps:
                     break
 
@@ -1444,7 +1447,8 @@ class PtActions(Actions):
                 # Get and properly name tensors returned by data layer
                 curr_call_chain = training_loop[self.step % len(training_loop)][2]
                 dl_device = curr_call_chain[0][0]._device
-                if logging_callchain and self.step % logger_step_freq == 0:
+                #if logging_callchain and self.step % logger_step_freq == 0:
+                if logging_callchain:
                     curr_call_chain = logging_callchain
                 tensors = []
                 if isinstance(data, torch.Tensor):
@@ -1462,7 +1466,7 @@ class PtActions(Actions):
                 self.__nm_graph_forward_pass(
                     call_chain=curr_call_chain, registered_tensors=self._training_state.tensor_dict,
                 )
-
+                #logging.info("finish forward pass")
                 curr_tensors_to_optimize = training_loop[self.step % len(training_loop)][1]
                 final_loss = 0
                 for tensor in curr_tensors_to_optimize:
@@ -1470,6 +1474,7 @@ class PtActions(Actions):
 
                 # Check for NaN/inf loss (across workers if applicable)
                 loss_nan_inf_checker = final_loss.clone()
+                #logging.info("finish loss calc")
                 if placement_gpu:
                     dist.all_reduce(loss_nan_inf_checker, torch.distributed.ReduceOp.MAX)
                 if torch.isnan(loss_nan_inf_checker).any() or torch.isinf(loss_nan_inf_checker).any():
@@ -1482,7 +1487,6 @@ class PtActions(Actions):
                         logging.warning('Loss is NaN or inf. Skipping update.')
                         self._training_state.clear_dict()  # Clear state dict here
                         continue
-
                 if self._optim_level in AmpOptimizations and self._optim_level != Optimization.mxprO0:
                     with amp.scale_loss(final_loss, curr_optimizer, delay_unscale=disable_allreduce) as scaled_loss:
                         if disable_allreduce:
@@ -1503,6 +1507,7 @@ class PtActions(Actions):
                                 final_loss.backward(bps_scale.to(final_loss.get_device()))
                         else:
                             final_loss.backward(bps_scale.to(final_loss.get_device()))
+                        #logging.info("finish backward")
                     # single device (CPU or GPU)
                     else:
                         # Fix (workaround?) enabling to backpropagate gradients on CPUs.
