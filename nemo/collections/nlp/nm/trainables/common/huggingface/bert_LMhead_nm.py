@@ -24,6 +24,7 @@ from nemo.backends.pytorch.nm import TrainableNM
 from nemo.core.neural_modules import PretrainedModelInfo
 from nemo.core.neural_types import ChannelType, NeuralType, LogitsType
 from nemo.utils.decorators import add_port_docs
+import torch
 
 __all__ = ['BertPretrain']
 
@@ -179,4 +180,6 @@ class BertPretrain(TrainableNM):
         return pretrained_models
 
     def forward(self, input_ids, token_type_ids, attention_mask):
-        return self.bert(input_ids, token_type_ids=token_type_ids, attention_mask=attention_mask)
+        mlm_loss, nsp_loss = self.bert(input_ids, token_type_ids=token_type_ids, attention_mask=attention_mask)
+        mlm_loss = torch.log_softmax(mlm_loss.float(), dim=-1)
+        return mlm_loss, nsp_loss

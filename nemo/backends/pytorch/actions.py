@@ -1520,7 +1520,7 @@ class PtActions(Actions):
                                     stack.enter_context(mod.no_sync())
                                 final_loss.backward(bps_scale.to(final_loss.get_device()))
                         else:
-                            logging.info("step: %s, loss: %s %s", self.step, final_loss.item(), bps_scale.to(final_loss.get_device()).item())
+                            #logging.info("step: %s, loss: %s %s", self.step, final_loss.item(), bps_scale.to(final_loss.get_device()).item())
                             final_loss.backward(bps_scale.to(final_loss.get_device()))
                             #final_loss.backward()
                         #logging.info("finish backward")
