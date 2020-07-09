@@ -13,7 +13,7 @@ import torch
 import torch.distributed as dist
 import torch.nn as nn
 import torch.optim as optim
-from torch.nn.parallel import DistributedDataParallel as DDP
+#from torch.nn.parallel import DistributedDataParallel as DDP
 
 from nemo import logging
 from nemo.backends.pytorch.module_wrapper import TrainableNeuralModuleWrapper
@@ -27,6 +27,16 @@ from nemo.core.neural_types import AxisKind, NeuralType
 from nemo.utils.app_state import AppState
 from nemo.utils.decorators import deprecated
 from nemo.utils.helpers import get_checkpoint_from_dir
+
+import herring.torch as herring
+from herring.torch.parallel import DistributedDataParallel as DDP
+
+torch.distributed.get_world_size = herring.get_world_size
+torch.distributed.get_rank = herring.get_rank
+torch.distributed.get_local_rank = herring.get_local_rank
+torch.distributed.is_initialized = lambda: True
+dist.is_initialized = lambda: True
+
 
 # these imports will happen on as-needed basis
 amp = None
@@ -1276,6 +1286,7 @@ class PtActions(Actions):
 
         logging_callchain = None
         # callbacks setup
+        logging.info("CALLBACKS :%s", callbacks)
         if callbacks is not None:
             for callback in callbacks:
                 if not isinstance(callback, ActionCallback) and not isinstance(callback, NeMoCallback):
@@ -1288,6 +1299,7 @@ class PtActions(Actions):
                     logger_step_freq = callback._step_freq
                     logging_tensors = callback.tensors
                     all_tensors = logging_tensors
+                    logging.info("LossloggerCallback: step_freq %s, log tensor: %s", callback._step_freq, callback.tensors)
                     for step in training_loop:
                         all_tensors = all_tensors + step[1]
                     (logging_callchain, _,) = self.__get_top_sorted_modules_and_dataloader(hook=all_tensors)
@@ -1372,9 +1384,10 @@ class PtActions(Actions):
                     # By default, disable broadcast_buffers. This disables batch norm synchronization on forward
                     # pass
                     logging.info("module name DDP: %s", module_name)
-                    module = DDP(
-                        module, device_ids=[self.local_rank], broadcast_buffers=False, find_unused_parameters=True
-                    )
+                    # module = DDP(
+                    #     module, device_ids=[self.local_rank], broadcast_buffers=False, find_unused_parameters=True
+                    # )
+                    module = DDP(module)
                     self.ddp_module_dict[key] = module
 
         # single GPU/CPU training
@@ -1447,8 +1460,8 @@ class PtActions(Actions):
                 # Get and properly name tensors returned by data layer
                 curr_call_chain = training_loop[self.step % len(training_loop)][2]
                 dl_device = curr_call_chain[0][0]._device
-                #if logging_callchain and self.step % logger_step_freq == 0:
-                if logging_callchain:
+                if logging_callchain and self.step % logger_step_freq == 0:
+                # if logging_callchain:
                     curr_call_chain = logging_callchain
                 tensors = []
                 if isinstance(data, torch.Tensor):
@@ -1476,7 +1489,8 @@ class PtActions(Actions):
                 loss_nan_inf_checker = final_loss.clone()
                 #logging.info("finish loss calc")
                 if placement_gpu:
-                    dist.all_reduce(loss_nan_inf_checker, torch.distributed.ReduceOp.MAX)
+                    #dist.all_reduce(loss_nan_inf_checker)
+                    herring.all_reduce(loss_nan_inf_checker)
                 if torch.isnan(loss_nan_inf_checker).any() or torch.isinf(loss_nan_inf_checker).any():
                     if stop_on_nan_loss:
                         raise ValueError('Loss is NaN or inf - exiting')
@@ -1506,7 +1520,9 @@ class PtActions(Actions):
                                     stack.enter_context(mod.no_sync())
                                 final_loss.backward(bps_scale.to(final_loss.get_device()))
                         else:
+                            logging.info("step: %s, loss: %s %s", self.step, final_loss.item(), bps_scale.to(final_loss.get_device()).item())
                             final_loss.backward(bps_scale.to(final_loss.get_device()))
+                            #final_loss.backward()
                         #logging.info("finish backward")
                     # single device (CPU or GPU)
                     else:
