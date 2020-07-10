@@ -27,6 +27,7 @@ from nemo.core.neural_types import AxisKind, NeuralType
 from nemo.utils.app_state import AppState
 from nemo.utils.decorators import deprecated
 from nemo.utils.helpers import get_checkpoint_from_dir
+import time
 
 import herring.torch as herring
 from herring.torch.parallel import DistributedDataParallel as DDP
@@ -1429,6 +1430,7 @@ class PtActions(Actions):
             batch_counter = 0
             logging.info("max_steps: %s, dataloader_length: %s, num_epochs: %s", max_steps, 0,  num_epochs)
             for _, data in enumerate(train_dataloader, 0):
+                step_start = time.time()
                 #logging.info("step: %s, epoch: %s", self.step, self.epoch)
                 if max_steps is not None and self.step >= max_steps:
                     break
@@ -1460,8 +1462,8 @@ class PtActions(Actions):
                 # Get and properly name tensors returned by data layer
                 curr_call_chain = training_loop[self.step % len(training_loop)][2]
                 dl_device = curr_call_chain[0][0]._device
-                if logging_callchain and self.step % logger_step_freq == 0:
-                # if logging_callchain:
+                #if logging_callchain and self.step % logger_step_freq == 0:
+                if logging_callchain:
                     curr_call_chain = logging_callchain
                 tensors = []
                 if isinstance(data, torch.Tensor):
@@ -1476,10 +1478,12 @@ class PtActions(Actions):
                     if t is not None:
                         self._training_state.set_tensor(t, d)
                 disable_allreduce = batch_counter < (batches_per_step - 1)
+                start = time.time()
                 self.__nm_graph_forward_pass(
                     call_chain=curr_call_chain, registered_tensors=self._training_state.tensor_dict,
                 )
-                #logging.info("finish forward pass")
+                logging.info("forward pass time: %s", time.time() - start)
+                start = time.time()
                 curr_tensors_to_optimize = training_loop[self.step % len(training_loop)][1]
                 final_loss = 0
                 for tensor in curr_tensors_to_optimize:
@@ -1501,6 +1505,8 @@ class PtActions(Actions):
                         logging.warning('Loss is NaN or inf. Skipping update.')
                         self._training_state.clear_dict()  # Clear state dict here
                         continue
+                logging.info("calculate loss: %s", time.time() - start)
+                start = time.time()
                 if self._optim_level in AmpOptimizations and self._optim_level != Optimization.mxprO0:
                     with amp.scale_loss(final_loss, curr_optimizer, delay_unscale=disable_allreduce) as scaled_loss:
                         if disable_allreduce:
@@ -1531,7 +1537,8 @@ class PtActions(Actions):
                             final_loss.backward(bps_scale)
                         else:
                             final_loss.backward(bps_scale.to(final_loss.get_device()))
-
+                logging.info("backward pass :%s", time.time() - start)
+                start = time.time()
                 # Register batch end with callbacks
                 _update_callbacks(
                     callbacks, registered_tensors=self._training_state.tensor_dict, final_loss=final_loss
@@ -1549,6 +1556,8 @@ class PtActions(Actions):
                     _perform_on_step_end(callbacks, get_state(self))
                     self.step += 1
                 self._training_state.clear_dict()
+                logging.info("optimizer step: %s", time.time() - start)
+                logging.info("step time: %s", time.time() - step_start)
             # End of epoch for loop
             # Register epochs end with callbacks
             _perform_on_epoch_end(callbacks, get_state(self))

@@ -210,7 +210,7 @@ class SimpleLossLoggerCallback(ActionCallback):
             self._last_epoch_start = time.time()
 
     def on_epoch_end(self):
-        logging.info("global_rank: %s", self._global_rank)
+        logging.info("global_rank: %s", self.global_rank)
         if self.global_rank is None or self.global_rank == 0:
             step = self.step
 
